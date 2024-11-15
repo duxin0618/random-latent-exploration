@@ -143,7 +143,7 @@ def parse_args():
 class RecordEpisodeStatistics(gym.Wrapper):
     def __init__(self, env, deque_size=100):
         super().__init__(env)
-        self.num_envs = getattr(env, "num_envs", 1)
+        self.num_envs = getattr(env, "num_envs", 1)  # num_envs 默认是128
         self.episode_returns = None
         self.episode_lengths = None
 
@@ -157,7 +157,7 @@ class RecordEpisodeStatistics(gym.Wrapper):
         return observations
 
     def step(self, action):
-        observations, rewards, dones, infos = super().step(action)
+        observations, rewards, dones, infos = super().step(action)  # rewards 为何没有使用？ info里面是什么信息？
         self.episode_returns += infos["reward"]
         self.episode_lengths += 1
         self.returned_episode_returns[:] = self.episode_returns
@@ -206,8 +206,9 @@ def create_layer_init_from_spec(spec: str):
 class Agent(nn.Module):
     def __init__(self, envs, rle_net):
         super().__init__()
+        # 建立提取图片特征网络
         self.network = nn.Sequential(
-            layer_init(nn.Conv2d(4, 32, 8, stride=4)),
+            layer_init(nn.Conv2d(4, 32, 8, stride=4)),  # 卷积核大小为 8*8， stride 表示步长
             nn.ReLU(),
             layer_init(nn.Conv2d(32, 64, 4, stride=2)),
             nn.ReLU(),
@@ -219,32 +220,36 @@ class Agent(nn.Module):
             layer_init(nn.Linear(256, 448)),
             nn.ReLU(),
         )
-
+        # 目标网络的作用？是隐空间变量z 进行编码
         self.goal_encoder = nn.Sequential(
             layer_init(nn.Linear(rle_net.feature_size, 448)),
             nn.ReLU(),
             layer_init(nn.Linear(448, 448)),
             nn.ReLU(),
         )
+        # 什么作用？
         self.extra_layer = nn.Sequential(layer_init(nn.Linear(448, 448), std=0.1), nn.ReLU())
+        # 策略网络
         self.actor = nn.Sequential(
             layer_init(nn.Linear(448, 448), std=0.01),
             nn.ReLU(),
             layer_init(nn.Linear(448, envs.single_action_space.n), std=0.01),
         )
+        # critic 网络， 两个？
         self.critic_ext = layer_init(nn.Linear(448, 1), std=0.01)
         self.critic_int = layer_init(nn.Linear(448, 1), std=0.01)
 
+    # 获取动作和价值
     def get_action_and_value(self, x, reward, goal, action=None, deterministic=False):
-        obs_hidden = self.network(x / 255.0)
+        obs_hidden = self.network(x / 255.0)  # 提取图片特征
 
         # goal is the goal vector
         # it is a tensor of shape (num_envs, feature_size)
-        goal_hidden = self.goal_encoder(goal)
-        hidden = obs_hidden + goal_hidden
+        goal_hidden = self.goal_encoder(goal)  # 448
+        hidden = obs_hidden + goal_hidden  # 448
 
         logits = self.actor(hidden)
-        probs = Categorical(logits=logits)
+        probs = Categorical(logits=logits)  
         features = self.extra_layer(hidden)
         if action is None and not deterministic:
             action = probs.sample()
@@ -281,6 +286,7 @@ class RLEModel(nn.Module):
         self.feature_size = feature_size
 
         # rle network phi(s) with similar architecture to value network
+        # 特征提取网路
         self.rle_net = nn.Sequential(
             layer_init(nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4)),
             nn.ReLU(),
@@ -303,35 +309,36 @@ class RLEModel(nn.Module):
 
         # num steps left for this goal per environment: switch_steps
         # resets whenever it is 0 or a life ends
-        # initially randomize num_steps_left for each environment
+        # initially randomize num_steps_left for each environment # 随机剩余步数
         self.num_steps_left = torch.randint(1, args.switch_steps, (num_envs,)).to(device)
 
         self.switch_goals_mask = torch.zeros(num_envs).to(device)
 
         # Maintain statistics for the rle network to be used for normalization
-        self.rle_rms = RunningMeanStd(shape=(1, self.feature_size))
+        self.rle_rms = RunningMeanStd(shape=(1, self.feature_size))  # 统计均值方差用来归一化后面的样本
         self.rle_feat_mean = torch.tensor(self.rle_rms.mean, device=self.device).float()
         self.rle_feat_std = torch.sqrt(torch.tensor(self.rle_rms.var, device=self.device)).float()
 
     def sample_goals(self, num_envs=None):
         if num_envs is None:
             num_envs = self.num_envs
-        goals = torch.randn((num_envs, self.feature_size), device=self.device).float()
+        goals = torch.randn((num_envs, self.feature_size), device=self.device).float() # 随机生成大小为(num_envs, feature_size) 均值为0，方差为1
         # normalize the goals
-        goals = goals / torch.norm(goals, dim=1, keepdim=True)
+        goals = goals / torch.norm(goals, dim=1, keepdim=True)  # 正则化
         return goals
 
     def step(self, next_done: torch.Tensor, next_ep_done: torch.Tensor):
         """
         next_done: termination indicator
         """
+        # （只有初始化的时候，才是随机步数）步数达到一定值，就更新目标，或者next_done=1时，说明游戏结束了
         # switch_goals_mask = 0 if the goal is not updated, 1 if the goal is updated
         # switch_goals_mask is a tensor of shape (num_envs,)
         # sample new goals for the environments that need to update their goals
         self.switch_goals_mask = torch.zeros(args.num_envs).to(device)
         self.switch_goals_mask[next_done.bool()] = 1.0
         self.num_steps_left -= 1
-        self.switch_goals_mask[self.num_steps_left == 0] = 1.0
+        self.switch_goals_mask[self.num_steps_left == 0] = 1.0  # 当步数为0时，更新目标
 
         # update the goals
         new_goals = self.sample_goals()
@@ -345,13 +352,14 @@ class RLEModel(nn.Module):
     def compute_rle_feat(self, obs, goals=None):
         if goals is None:
             goals = self.goals
-        with torch.no_grad():
+        with torch.no_grad():  # 特征提取网络 输入到单独的一层 提取rle特征， goal[numenv, feature]
             raw_rle_feat = self.last_layer(self.rle_net(obs))
-            rle_feat = (raw_rle_feat - self.rle_feat_mean) / (self.rle_feat_std + 1e-5)
-            reward = (rle_feat * goals).sum(axis=1) / torch.norm(rle_feat, dim=1)
+            rle_feat = (raw_rle_feat - self.rle_feat_mean) / (self.rle_feat_std + 1e-5)  # 归一化
+            reward = (rle_feat * goals).sum(axis=1) / torch.norm(rle_feat, dim=1) # 分母是求模长L2范数，分子是内积
 
         return reward, raw_rle_feat, rle_feat
 
+    # 更新样本的均值和方差
     def update_rms(self, b_rle_feats):
         # Update the rle rms
         self.rle_rms.update(b_rle_feats)
@@ -521,7 +529,7 @@ if __name__ == "__main__":
     args = parse_args()
     os.makedirs(args.local_dir, exist_ok=True)
 
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}" # 默认env_id是alien, exp_name是ppo_rle
     if args.track:
         import wandb
 
@@ -553,7 +561,7 @@ if __name__ == "__main__":
         reward_clip=True,
         max_episode_steps=int(108000 / 4),
         seed=args.seed,
-        repeat_action_probability=0.25,
+        repeat_action_probability=0.25,  # Sticky action 有25%的概率选择上一个动作？因为使得学习的策略更加具有挑战性
     )
     envs.num_envs = args.num_envs
     envs.single_action_space = envs.action_space
@@ -1002,4 +1010,4 @@ if __name__ == "__main__":
         if not os.path.exists("saved_rle_networks"):
             os.makedirs("saved_rle_networks")
         # save the rle network
-        torch.save(rle_network.state_dict(), f"saved_rle_networks/{run_name}.pt")
+        t
