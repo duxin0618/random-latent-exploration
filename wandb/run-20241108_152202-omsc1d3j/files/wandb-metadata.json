@@ -1,0 +1,24 @@
+{
+    "os": "Linux-6.8.0-48-generic-x86_64-with-glibc2.17",
+    "python": "3.8.20",
+    "heartbeatAt": "2024-11-08T07:22:06.158749",
+    "startedAt": "2024-11-08T07:22:02.219179",
+    "docker": null,
+    "gpu": "NVIDIA GeForce RTX 4060",
+    "gpu_count": 1,
+    "cpu_count": 16,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "atari/ppo_rle.py",
+    "codePath": "atari/ppo_rle.py",
+    "git": {
+        "remote": "git@github.com:duxin0618/random-latent-exploration.git",
+        "commit": "bc9fac1f38a263ad1f0025313935b65521fbc3a1"
+    },
+    "email": "duxin5718@gmail.com",
+    "root": "/home/duxin/dx/project/random-latent-exploration",
+    "host": "duxin",
+    "username": "duxin",
+    "executable": "/home/duxin/anaconda3/envs/rle/bin/python"
+}
